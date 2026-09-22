@@ -86,7 +86,7 @@ python live_demo.py Beauty --device cuda --scale 4 --backend none
 python live_demo.py Beauty --device cuda --scale 4 --backend display -v
 ```
 
-### Save Raw Output to `WIP/WIP.yuv` for VMAF Evaluation
+### Output is saved to `WIP/WIP.yuv` for VMAF Evaluation
 
 ```bash
 python live_demo.py Beauty --device cuda --scale 4 --backend eval
