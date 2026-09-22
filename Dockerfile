@@ -1,0 +1,65 @@
+ARG CUDA_VERSION=12.3.1
+ARG VMAF_TAG=master
+ARG FFFMPEG_TAG=master
+FROM nvidia/cuda:$CUDA_VERSION-devel-ubuntu22.04
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libopenjp2-7-dev \
+    ninja-build cmake git python3 python3-pip nasm xxd pkg-config curl unzip
+
+RUN git clone https://github.com/Netflix/vmaf.git && cd vmaf && git checkout $VMAF_TAG
+
+RUN git clone https://github.com/FFmpeg/FFmpeg.git && cd FFmpeg && git checkout $FFFMPEG_TAG
+
+RUN git clone https://github.com/FFmpeg/nv-codec-headers.git && cd nv-codec-headers && make && make install
+
+#Add CUDA Stubs to ldconfig:
+
+RUN bash -c "echo '/usr/local/cuda/lib64/stubs/' > /etc/ld.so.conf.d/cuda-stubs.conf"
+RUN ldconfig
+
+# install vmaf
+RUN python3 -m pip install meson
+RUN cd vmaf && meson setup \
+    libvmaf/build libvmaf \
+    --prefix=/usr/local \
+    --libdir=/usr/local/lib \
+    --default-library=shared \
+    -Denable_tests=false \
+    -Denable_cuda=true \
+    -Denable_avx512=true \
+    --buildtype release && \
+    ninja -vC libvmaf/build  && \
+    ninja -vC libvmaf/build  install && \
+    mkdir -p /usr/local/share/model/ && \
+    cp -r /vmaf/model/* /usr/local/share/model/
+
+#Call ldconfig again:
+
+RUN ldconfig
+
+# install ffmpeg
+RUN cd FFmpeg && ./configure \
+    --enable-libnpp \
+    --enable-nonfree \
+    --enable-nvdec \
+    --enable-nvenc \
+    --enable-cuvid \
+    --enable-cuda \
+    --enable-cuda-nvcc \
+    --enable-libvmaf \
+    --enable-ffnvcodec \
+    --disable-stripping \
+    --extra-cflags="-I/usr/local/cuda/include" \
+    --extra-ldflags="-L/usr/local/cuda/lib64"
+
+RUN cd FFmpeg && make -j && make install
+
+RUN mkdir /data
+# VMAF+decode GPU (only works for NVDec supported formats https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new)
+#ENTRYPOINT ["ffmpeg" ,"-hwaccel", "cuda", "-hwaccel_output_format" ,"cuda", \
+#    "-i" ,"/data/ref.mp4", \
+#    "-hwaccel", "cuda", "-hwaccel_output_format", "cuda", \
+#    "-i", "/data/dis.mp4"  ,\
+#    "-filter_complex", "[0:v]scale_cuda=format=yuv420p[ref];[1:v]scale_cuda=format=yuv420p[dist];[dist][ref]libvmaf_cuda" ,"-f" ,"null", "-"]
+
+ENTRYPOINT ["vmaf"]
